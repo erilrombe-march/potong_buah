@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Fruit Slash VR</title>
+<title>Fruits Hunter VR</title>
 <!-- A-Frame: coba beberapa sumber, terakhir file lokal aframe.min.js (satu folder dengan file ini) -->
 <script src="https://cdn.jsdelivr.net/npm/aframe@1.6.0/dist/aframe.min.js"></script>
 <script>window.AFRAME||document.write('<script src="https://aframe.io/releases/1.6.0/aframe.min.js"><\/script>')</script>
@@ -12,11 +12,37 @@
 html,body{margin:0;height:100%;background:#120a1f;touch-action:none}
 #trail{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:5}
 #err{display:none;position:fixed;inset:0;z-index:9;padding:24px;background:#120a1f;color:#fff;font:16px/1.5 sans-serif}
+#music-panel{position:fixed;z-index:8;top:12px;left:12px;display:flex;gap:7px;align-items:center;
+  padding:9px 10px;border:1px solid rgba(255,255,255,.25);border-radius:12px;
+  background:rgba(18,10,31,.82);color:#fff;font:13px/1.2 sans-serif;backdrop-filter:blur(8px)}
+#music-panel select,#music-panel button{background:#24163d;color:#fff;border:1px solid #8063a8;border-radius:7px;padding:7px}
+#music-panel button{cursor:pointer}
+@media(max-width:520px){#music-panel{top:8px;left:8px;gap:4px;padding:6px;font-size:11px}#music-panel select,#music-panel button{padding:6px}}
 </style>
 <script>
 if (!window.AFRAME) {
   document.addEventListener('DOMContentLoaded', () => { document.getElementById('err').style.display = 'block'; });
 } else {
+document.addEventListener('DOMContentLoaded', () => {
+  const list = document.getElementById('music-list');
+  const toggle = document.getElementById('music-toggle');
+  toggle.addEventListener('click', () => {
+    if (musicPlaying) {
+      stopAutoMusic();
+      stopMusic();
+      musicPlaying = false;
+      toggle.textContent = 'Putar';
+    } else {
+      startAutoMusic(true);
+    }
+  });
+  list.addEventListener('change', () => {
+    if (musicPlaying) {
+      startMusic(list.value);
+      scheduleNextTrack();
+    }
+  });
+});
 const T = AFRAME.THREE;
 
 /* ---------- Suara sederhana (noise burst) ---------- */
@@ -53,6 +79,91 @@ function sfx(type) {
     const g = ac.createGain(); g.gain.value = type === 'whoosh' ? 0.05 : type === 'fuse' ? 0.07 : 0.35;
     s.connect(f); f.connect(g); g.connect(ac.destination); s.start();
   } catch (e) {}
+}
+
+/* Musik menu sintetis (tanpa file audio eksternal). Browser memerlukan klik untuk mengaktifkan audio. */
+const musicModes = {
+  chill:       { name: 'Chill malam',       notes: [261.63,329.63,392.00,329.63,293.66,349.23,392.00,349.23], wave: 'sine', beat: 420 },
+  arcade:      { name: 'Arcade',             notes: [392.00,523.25,659.25,523.25,440.00,587.33,783.99,659.25], wave: 'triangle', beat: 180 },
+  zen:         { name: 'Zen Jepang',         notes: [293.66,349.23,440.00,587.33,440.00,349.23], wave: 'sine', beat: 560 },
+  synthwave:   { name: 'Synthwave',          notes: [130.81,196.00,261.63,329.63,392.00,329.63,261.63,196.00], wave: 'sawtooth', beat: 250 },
+  upbeat:      { name: 'Upbeat',             notes: [523.25,587.33,659.25,783.99,659.25,587.33,523.25,392.00], wave: 'triangle', beat: 190 },
+  dreamy:      { name: 'Dreamy',             notes: [220.00,277.18,329.63,440.00,329.63,277.18], wave: 'sine', beat: 600 },
+  cyber:       { name: 'Cyber Pulse',        notes: [110.00,164.81,220.00,329.63,220.00,164.81,246.94,329.63], wave: 'square', beat: 210 },
+  tropical:    { name: 'Tropical',           notes: [392.00,440.00,523.25,659.25,587.33,523.25,440.00,392.00], wave: 'triangle', beat: 280 },
+  retro:       { name: 'Retro 8-bit',        notes: [261.63,392.00,523.25,392.00,293.66,440.00,587.33,440.00], wave: 'square', beat: 170 },
+  piano:       { name: 'Piano Digital',      notes: [261.63,329.63,392.00,523.25,392.00,329.63,293.66,349.23], wave: 'sine', beat: 360 },
+  action:      { name: 'Action',             notes: [196.00,246.94,293.66,392.00,349.23,293.66,246.94,220.00], wave: 'sawtooth', beat: 160 },
+  starlight:   { name: 'Starlight',          notes: [523.25,659.25,783.99,659.25,587.33,698.46,880.00,698.46], wave: 'sine', beat: 460 },
+  funky:       { name: 'Funky',              notes: [196.00,246.94,311.13,392.00,311.13,246.94,220.00,293.66], wave: 'square', beat: 220 },
+  calm:        { name: 'Calm Breeze',        notes: [174.61,220.00,261.63,349.23,311.13,261.63,220.00,196.00], wave: 'sine', beat: 640 },
+  boss:        { name: 'Boss Battle',        notes: [146.83,220.00,293.66,349.23,293.66,220.00,164.81,246.94], wave: 'sawtooth', beat: 200 }
+};
+let musicTimer = null, musicStep = 0, musicGain = null;
+let musicPlaying = false, musicAutoTimer = null;
+let musicPlaylist = Object.keys(musicModes);
+let currentMusicIndex = 0;
+
+function stopAutoMusic() {
+  if (musicAutoTimer) clearTimeout(musicAutoTimer);
+  musicAutoTimer = null;
+}
+function scheduleNextTrack() {
+  stopAutoMusic();
+  if (!musicPlaying) return;
+  // Ganti trek secara otomatis setiap 18 detik.
+  musicAutoTimer = setTimeout(() => {
+    if (!musicPlaying) return;
+    currentMusicIndex = (currentMusicIndex + 1) % musicPlaylist.length;
+    const nextMode = musicPlaylist[currentMusicIndex];
+    const list = document.getElementById('music-list');
+    if (list) list.value = nextMode;
+    startMusic(nextMode);
+    scheduleNextTrack();
+  }, 18000);
+}
+function startAutoMusic(advanceTrack = false) {
+  const list = document.getElementById('music-list');
+  if (!list) return;
+  if (advanceTrack) {
+    const selected = musicPlaylist.indexOf(list.value);
+    currentMusicIndex = selected >= 0 ? (selected + 1) % musicPlaylist.length : 0;
+    list.value = musicPlaylist[currentMusicIndex];
+  } else {
+    const selected = musicPlaylist.indexOf(list.value);
+    currentMusicIndex = selected >= 0 ? selected : 0;
+  }
+  musicPlaying = true;
+  const toggle = document.getElementById('music-toggle');
+  if (toggle) toggle.textContent = 'Jeda';
+  startMusic(musicPlaylist[currentMusicIndex]);
+  scheduleNextTrack();
+}
+function stopMusic() {
+  if (musicTimer) clearInterval(musicTimer);
+  musicTimer = null;
+  if (musicGain && ac) { try { musicGain.gain.setTargetAtTime(0, ac.currentTime, .08); } catch(e) {} }
+}
+function startMusic(mode) {
+  stopMusic();
+  try {
+    ac = ac || new (window.AudioContext || window.webkitAudioContext)();
+    ac.resume();
+    if (musicGain) { try { musicGain.disconnect(); } catch(e) {} }
+    musicGain = ac.createGain(); musicGain.gain.value = .075; musicGain.connect(ac.destination);
+    const cfg = musicModes[mode] || musicModes.chill;
+    musicStep = 0;
+    const playNote = () => {
+      if (!ac || ac.state === 'closed') return;
+      const t = ac.currentTime, freq = cfg.notes[musicStep++ % cfg.notes.length];
+      const osc = ac.createOscillator(), env = ac.createGain();
+      osc.type = cfg.wave; osc.frequency.setValueAtTime(freq, t);
+      env.gain.setValueAtTime(.001, t); env.gain.exponentialRampToValueAtTime(.24, t + .025);
+      env.gain.exponentialRampToValueAtTime(.001, t + cfg.beat / 1000 * .85);
+      osc.connect(env); env.connect(musicGain); osc.start(t); osc.stop(t + cfg.beat / 1000);
+    };
+    playNote(); musicTimer = setInterval(playNote, cfg.beat);
+  } catch(e) {}
 }
 
 /* ---------- Jarak titik ke segmen (bilah pedang) ---------- */
@@ -212,22 +323,7 @@ function buildScenery(root) {
     gl.scale.set(1.8, 1.8, 1); gl.position.copy(lan.position); root.add(gl);
     if (i < 2) { const pl = new T.PointLight(0xff9955, .9, 7); pl.position.set(x, 2.4, z); root.add(pl); }
   });
-
-  // kelopak sakura berjatuhan
-  const NP = 120, pp = new Float32Array(NP * 3);
-  const reset = (i, top) => { pp[i * 3] = (Math.random() - .5) * 10; pp[i * 3 + 1] = top ? 6 : Math.random() * 6; pp[i * 3 + 2] = (Math.random() - .5) * 10 - 1; };
-  for (let i = 0; i < NP; i++) reset(i, false);
-  const pg = new T.BufferGeometry(); pg.setAttribute('position', new T.BufferAttribute(pp, 3));
-  const petals = new T.Points(pg, new T.PointsMaterial({ color: 0xffb7d5, size: .07, transparent: true, opacity: .9, depthWrite: false }));
-  petals.frustumCulled = false; root.add(petals);
-
   return (time, d) => {
-    for (let i = 0; i < NP; i++) {
-      pp[i * 3 + 1] -= (.25 + (i % 5) * .06) * d;
-      pp[i * 3] += Math.sin(time / 900 + i) * .25 * d;
-      if (pp[i * 3 + 1] < 0) reset(i, true);
-    }
-    pg.attributes.position.needsUpdate = true;
     lans.forEach((l, i) => { l.scale.y = 1.25 + .03 * Math.sin(time / 130 + i * 2); });
   };
 }
@@ -304,7 +400,7 @@ AFRAME.registerComponent('sword', {
 AFRAME.registerComponent('slice-game', {
   init() {
     this.objs = []; this.now = 0;
-    this.S = { score: 0, lives: 5, run: false, combo: 0, last: 0, next: 0, best: 0 };
+    this.S = { score: 0, lives: 5, time: 60, run: false, combo: 0, last: 0, next: 0, best: 0 };
     try { this.S.best = +localStorage.getItem('fs-best') || 0; } catch (e) {}
     const P = Math.PI;
     this.G = {
@@ -328,7 +424,7 @@ AFRAME.registerComponent('slice-game', {
         sw.length < 2 || sw.some(e => !e.components || !e.components.sword)) return false;
     this.ctx = this.cv.getContext('2d');
     this.swords = sw.map(e => e.components.sword);
-    sw.forEach(e => e.addEventListener('triggerdown', () => { if (!this.S.run) this.start(); }));
+    // Trigger kontroler hanya untuk bermain; mulai permainan melalui tombol MULAI.
     this.scenery = buildScenery(this.el.object3D);
     this.pointer(); this.showMenu();
     return true;
@@ -339,7 +435,7 @@ AFRAME.registerComponent('slice-game', {
     const cv = this.cv, rs = () => { cv.width = innerWidth; cv.height = innerHeight; };
     rs(); addEventListener('resize', rs);
     let down = false, pv = null;
-    addEventListener('pointerdown', e => { down = true; pv = [e.clientX, e.clientY]; this.pts = []; this.mouse(pv, pv); });
+    addEventListener('pointerdown', e => { down = true; pv = [e.clientX, e.clientY]; this.pts = []; this.mouse(pv, pv); this.clickBtn(e.clientX, e.clientY); });
     addEventListener('pointerup', () => down = false);
     addEventListener('pointermove', e => {
       if (!down) return;
@@ -367,29 +463,52 @@ AFRAME.registerComponent('slice-game', {
   clear() { this.objs.slice().forEach(o => this.rm(o)); },
   hudUp() {
     const S = this.S;
-    this.hud.setAttribute('value', S.run ? `Skor ${S.score}\nNyawa ${S.lives}` + (S.combo > 1 ? `\nCombo x${S.combo}` : '') : '');
+    this.hud.setAttribute('value', S.run ? `Skor : ${S.score}   Waktu : ${Math.ceil(S.time)}\nNyawa : ${S.lives}` + (S.combo > 1 ? `\nCombo x${S.combo}` : '') : '');
   },
 
   showMenu(txt) {
     this.clear();
-    const t = this.F[0], m = this.fruitMesh(t, 1.45);
-    m.position.set(0, 1.4, -1.4);
-    this.add({ m, v: new T.Vector3(), sp: new T.Vector3(0, 1, 0), kind: 'start', r: .31, t, hit: true, g: 0 });
+    const m = this.makeButton(); m.position.set(0, 1.4, -1.4);
+    this.add({ m, v: new T.Vector3(), sp: new T.Vector3(), kind: 'start', r: 0, hit: false, g: 0 });
+    this.btn = m;
     this.menu.setAttribute('visible', true);
     document.getElementById('sub').setAttribute('value',
-      txt || 'Tebas semangka untuk mulai\nKontroler VR: ayunkan pedang (atau tekan trigger)\nDesktop / HP: seret mouse atau jari');
+      txt || 'Tekan tombol MULAI\nKontroler VR : Tekan Trigger\nDesktop / HP : Klik atau Tekan Tombol');
     this.hudUp();
   },
   start() {
     const S = this.S;
-    this.clear(); Object.assign(S, { score: 0, lives: 5, run: true, combo: 0, next: this.now + 700 });
+    this.btn = null; this.clear(); Object.assign(S, { score: 0, lives: 5, time: 60, run: true, combo: 0, next: this.now + 700 });
     this.menu.setAttribute('visible', false); this.hudUp(); sfx('cut');
+    startAutoMusic(true);
   },
   end() {
     const S = this.S; S.run = false; S.best = Math.max(S.best, S.score);
     try { localStorage.setItem('fs-best', S.best); } catch (e) {}
-    document.getElementById('title').setAttribute('value', 'GAME OVER');
-    this.showMenu(`Skor: ${S.score}    Terbaik: ${S.best}\nTebas semangka untuk main lagi`);
+    document.getElementById('title').setAttribute('value', S.lives <= 0 ? 'GAME OVER' : 'WAKTU HABIS!');
+    this.showMenu(`Skor: ${S.score}    Terbaik: ${S.best}\nTekan tombol MULAI untuk main lagi`);
+  },
+
+  /* Tombol MULAI 3D (teks digambar di canvas) */
+  makeButton() {
+    const face = new T.MeshBasicMaterial({ transparent: true, map: cvTex(512, 160, (c, w, h) => {
+      const g = c.createLinearGradient(0, 0, 0, h); g.addColorStop(0, '#2ee59d'); g.addColorStop(1, '#0a9f6a');
+      c.fillStyle = g; c.beginPath();
+      if (c.roundRect) c.roundRect(4, 4, w - 8, h - 8, 36); else c.rect(4, 4, w - 8, h - 8);
+      c.fill(); c.lineWidth = 8; c.strokeStyle = '#ffffff'; c.stroke();
+      c.font = 'bold 84px sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+      c.fillStyle = 'rgba(0,0,0,.3)'; c.fillText('MULAI', w / 2 + 4, h / 2 + 6);
+      c.fillStyle = '#fff'; c.fillText('MULAI', w / 2, h / 2 + 2);
+    }) });
+    const side = new T.MeshStandardMaterial({ color: 0x0a7a52, roughness: .5 });
+    return new T.Mesh(new T.BoxGeometry(1, .32, .08), [side, side, side, side, face, side]);
+  },
+  /* Klik / ketuk tombol dengan mouse atau jari */
+  clickBtn(x, y) {
+    const cam = this.el.camera;
+    if (this.S.run || !this.btn || !cam || this.el.is('vr-mode')) return;
+    this.ray.setFromCamera(new T.Vector2(x / innerWidth * 2 - 1, -(y / innerHeight) * 2 + 1), cam);
+    if (this.ray.ray.intersectsBox(new T.Box3().setFromObject(this.btn).expandByScalar(.03))) this.start();
   },
 
   /* Buah utuh: kulit bertekstur + hiasan (tangkai apel, daun, ujung lemon) */
@@ -445,12 +564,16 @@ AFRAME.registerComponent('slice-game', {
       const bomb = this.S.score >= 40 && Math.random() < .18, t = this.F[Math.random() * this.F.length | 0];
       let m, spark;
       if (bomb) { const b = this.makeBomb(); m = b.g; spark = b.spark; sfx('fuse'); }
-      else m = this.fruitMesh(t);
-      const x = (Math.random() - .5) * 1.7;
-      m.position.set(x, .3, -1.0 - Math.random() * .5);
-      this.add({ m, v: new T.Vector3(-x * .45 + (Math.random() - .5) * .4, 3.7 + Math.random() * .6, Math.random() * .3),
+      else m = this.fruitMesh(t, 1.35);
+      const angle = Math.random() * Math.PI * 2;
+      const radius = 2.0 + Math.random() * .65;
+      const x = Math.sin(angle) * radius;
+      const z = -Math.cos(angle) * radius;
+      const launchY = 1.15 + Math.random() * 1.25;
+      m.position.set(x, launchY, z);
+      this.add({ m, v: new T.Vector3(-x * .35 + (Math.random() - .5) * .35, 3.8 + Math.random() * .7, -z * .25),
         sp: bomb ? new T.Vector3(0, 2, 0) : new T.Vector3(Math.random() * 4, Math.random() * 4, Math.random() * 4),
-        kind: bomb ? 'bomb' : 'fruit', r: bomb ? .15 : .15 * Math.max(...t.sc) * t.s, t, hit: true, g: 1, spark });
+        kind: bomb ? 'bomb' : 'fruit', r: bomb ? .15 : .15 * 1.35 * Math.max(...t.sc) * t.s, t, hit: true, g: 1, spark });
     }
   },
 
@@ -493,6 +616,11 @@ AFRAME.registerComponent('slice-game', {
     const d = Math.min(dt, 50) / 1000, S = this.S;
     if (this.scenery) this.scenery(time, d);
 
+    if (S.run) {
+      const prev = Math.ceil(S.time); S.time -= d;
+      if (S.time <= 0) { S.time = 0; this.end(); return; }
+      if (Math.ceil(S.time) !== prev) this.hudUp();
+    }
     if (S.run && time > S.next) { this.launch(); S.next = time + Math.max(550, 1400 - S.score * 5); }
 
     // fisika
@@ -508,7 +636,7 @@ AFRAME.registerComponent('slice-game', {
         if (o.ttl <= 0) { this.rm(o); continue; }
       }
       if ((o.kind === 'fruit' || o.kind === 'bomb') && o.v.y < 0 && m.position.y < .05) {
-        this.rm(o); // buah jatuh dibiarkan hilang, nyawa tidak berkurang
+        this.rm(o);
       }
     }
 
@@ -520,6 +648,11 @@ AFRAME.registerComponent('slice-game', {
         const p = o.m.position;
         if (Math.min(segDist(p, s.base, s.tip), segDist(p, s.pBase, s.pTip)) < o.r + .035) this.slice(o);
       }
+    }
+
+    // tombol MULAI: berdenyut pelan, bisa disentuh pedang VR
+    if (!S.run && this.btn) {
+      this.btn.scale.setScalar(1 + .03 * Math.sin(time / 250));
     }
 
     // jejak mouse / jari
@@ -538,19 +671,35 @@ AFRAME.registerComponent('slice-game', {
 </script>
 </head>
 <body>
-<div id="err">
-  <h2>A-Frame gagal dimuat</h2>
-  <p>Unduh <b>https://aframe.io/releases/1.6.0/aframe.min.js</b>, simpan sebagai <b>aframe.min.js</b> di folder yang sama dengan file ini, lalu refresh (Ctrl+Shift+R).</p>
-</div>
 <canvas id="trail"></canvas>
-
+<div id="music-panel" aria-label="Pilihan musik">
+  <label for="music-list">♫ Musik</label>
+  <select id="music-list" aria-label="Pilih musik">
+    <option value="chill">Chill malam</option>
+    <option value="arcade">Arcade</option>
+    <option value="zen">Zen Jepang</option>
+    <option value="synthwave">Synthwave</option>
+    <option value="upbeat">Upbeat</option>
+    <option value="dreamy">Dreamy</option>
+    <option value="cyber">Cyber Pulse</option>
+    <option value="tropical">Tropical</option>
+    <option value="retro">Retro 8-bit</option>
+    <option value="piano">Piano Digital</option>
+    <option value="action">Action</option>
+    <option value="starlight">Starlight</option>
+    <option value="funky">Funky</option>
+    <option value="calm">Calm Breeze</option>
+    <option value="boss">Boss Battle</option>
+  </select>
+  <button id="music-toggle" type="button">Putar</button>
+</div>
 <a-scene slice-game renderer="antialias:true" vr-mode-ui="enabled:true" webxr="optionalFeatures:hand-tracking">
   <!-- Langit, gunung, panggung, lentera dibuat lewat buildScenery() di skrip -->
   <a-entity light="type:ambient;color:#c9b8ff;intensity:0.9"></a-entity>
   <a-entity light="type:directional;color:#ffe9c8;intensity:1.1" position="1 4 2"></a-entity>
 
   <a-entity id="rig">
-    <a-entity camera look-controls="mouseEnabled:false;touchEnabled:false;pointerLockEnabled:false" wasd-controls="enabled:false" position="0 1.6 0">
+    <a-entity camera look-controls="mouseEnabled:true;touchEnabled:true;pointerLockEnabled:false" wasd-controls="enabled:false" position="0 1.6 0">
       <a-plane id="flash" position="0 0 -0.3" width="2" height="2" material="shader:flat;color:#ff0000;transparent:true;opacity:0;depthTest:false"></a-plane>
       <a-text id="hud" value="" position="0 0.5 -1.3" align="center" width="1.4" color="#ffffff"></a-text>
     </a-entity>
@@ -559,7 +708,7 @@ AFRAME.registerComponent('slice-game', {
   </a-entity>
 
   <a-entity id="menu">
-    <a-text id="title" value="FRUIT SLASH" align="center" width="3.2" color="#ffd166" position="0 2.15 -1.4"></a-text>
+    <a-text id="title" value="FRUITS HUNTER" align="center" width="3.2" color="#ffd166" position="0 2.15 -1.4"></a-text>
     <a-text id="sub" value="" align="center" width="1.9" color="#ffffff" position="0 0.8 -1.4"></a-text>
   </a-entity>
 </a-scene>
